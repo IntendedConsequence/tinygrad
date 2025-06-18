@@ -193,11 +193,15 @@ def train_cifar():
     X = X[...,1:size+1,:].flip(-2).cat(X, X[...,-(size+1):-1,:].flip(-2), dim=-2)
     return X
 
+
+  def randint_var(shape, high):
+    return (Tensor.rand(shape) * high).cast(dtypes.int)
+
   # return a binary mask in the format of BS x C x H x W where H x W contains a random square mask
   def make_square_mask(shape, mask_size) -> Tensor:
     BS, _, H, W = shape
-    low_x = Tensor.randint(BS, low=0, high=W-mask_size).reshape(BS,1,1,1)
-    low_y = Tensor.randint(BS, low=0, high=H-mask_size).reshape(BS,1,1,1)
+    low_x = randint_var(BS, high=W-mask_size).reshape(BS,1,1,1)
+    low_y = randint_var(BS, high=H-mask_size).reshape(BS,1,1,1)
     idx_x = Tensor.arange(W, dtype=dtypes.int32).reshape((1,1,1,W))
     idx_y = Tensor.arange(H, dtype=dtypes.int32).reshape((1,1,H,1))
     return (idx_x >= low_x) * (idx_x < (low_x + mask_size)) * (idx_y >= low_y) * (idx_y < (low_y + mask_size))
@@ -215,23 +219,26 @@ def train_cifar():
     Xs, Ys, Xi, Yi = make_random_crop_indices(X.shape, crop_size)
     return X.gather(-1, (Xs + Xi).expand(-1, 3, X.shape[2], -1)).gather(-2, ((Ys+Yi).expand(-1, 3, crop_size, crop_size)))
 
-  def cutmix(X, Y, order, mask_size=3):
+  def cutmix(X, Y, order, mask_size):
     mask = make_square_mask(X.shape, mask_size)
     X_patch, Y_patch = X[order], Y[order]
     X_cutmix = mask.where(X_patch, X)
-    mix_portion = float(mask_size**2)/(X.shape[-2]*X.shape[-1])
-    Y_cutmix = mix_portion * Y_patch + (1. - mix_portion) * Y
+    denom = 1.0 / (X.shape[-2]*X.shape[-1])
+    mix_portion = (mask_size*mask_size)*denom
+    Y_cutmix = Y_patch * mix_portion + Y * (-mix_portion + 1.)
     return X_cutmix, Y_cutmix
 
   @TinyJit
-  def augmentations(X:Tensor, Y:Tensor):
+  def augmentations(X:Tensor, Y:Tensor, mask_size):
     perms = Tensor.randperm(X.shape[0], device=X.device) # We reuse perms for cutmix, because they are expensivne to generate
     if getenv("RANDOM_CROP", 1):
       X = random_crop(X, crop_size=32)
     if getenv("RANDOM_FLIP", 1):
       X = (Tensor.rand(X.shape[0],1,1,1) < 0.5).where(X.flip(-1), X) # flip LR
     X, Y = X[perms], Y[perms]
-    return X, Y, *cutmix(X, Y, perms, mask_size=hyp['net']['cutmix_size'])
+    X, Y = cutmix(X, Y, perms, mask_size)
+    return X, Y
+
 
   # the operations that remain inside batch fetcher is the ones that involves random operations
   def fetch_batches(X_in:Tensor, Y_in:Tensor, BS:int, is_train:bool):
@@ -240,8 +247,9 @@ def train_cifar():
       st = time.monotonic()
       X, Y = X_in, Y_in
       if is_train:
-        X, Y, X_cm, Y_cm = augmentations(X, Y)
-        if getenv("CUTMIX", 1) and step >= hyp['net']['cutmix_steps']: X, Y = X_cm, Y_cm
+        vcutmix_mask = Variable("cutmix_mask", 0, 3)
+        vcutmix_mask_bound = vcutmix_mask.bind(hyp['net']['cutmix_size'] if getenv("CUTMIX", 1) and step >= hyp['net']['cutmix_steps'] else 0)
+        X, Y = augmentations(X, Y, vcutmix_mask_bound)
       et = time.monotonic()
       print(f"shuffling {'training' if is_train else 'test'} dataset in {(et-st)*1e3:.2f} ms ({epoch=})")
       vi = Variable("i", 0, X.shape[0]-1)
