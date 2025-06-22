@@ -233,11 +233,7 @@ def train_cifar():
     if getenv("RANDOM_FLIP", 1):
       X = (Tensor.rand(X.shape[0],1,1,1) < 0.5).where(X.flip(-1), X) # flip LR
     X, Y = X[perms], Y[perms]
-    if False:
-      # ?
-      cutmix_order = arange.stack(perms)[do_cutmix]
-    elif True:
-      cutmix_order = perms * do_cutmix + arange * (1 - do_cutmix)
+    cutmix_order = perms * do_cutmix + arange * (1 - do_cutmix)
     X, Y = cutmix(X, Y, cutmix_order, mask_size=hyp['net']['cutmix_size'])
     return X, Y
 
