@@ -223,15 +223,18 @@ def train_cifar():
     Y_cutmix = mix_portion * Y_patch + (1. - mix_portion) * Y
     return X_cutmix, Y_cutmix
 
+  # cutmix always, select via variable 0-1 inside augmentations
   @TinyJit
-  def augmentations(X:Tensor, Y:Tensor):
+  def augmentations(X:Tensor, Y:Tensor, do_cutmix):
     perms = Tensor.randperm(X.shape[0], device=X.device) # We reuse perms for cutmix, because they are expensive to generate
     if getenv("RANDOM_CROP", 1):
       X = random_crop(X, crop_size=32)
     if getenv("RANDOM_FLIP", 1):
       X = (Tensor.rand(X.shape[0],1,1,1) < 0.5).where(X.flip(-1), X) # flip LR
     X, Y = X[perms], Y[perms]
-    return X, Y, *cutmix(X, Y, perms, mask_size=hyp['net']['cutmix_size'])
+    cX, cY = cutmix(X, Y, perms, mask_size=hyp['net']['cutmix_size'])
+    X, Y = X.stack(cX)[do_cutmix], Y.stack(cY)[do_cutmix]
+    return X, Y
 
   # the operations that remain inside batch fetcher is the ones that involves random operations
   def fetch_batches(X_in:Tensor, Y_in:Tensor, BS:int, is_train:bool):
@@ -240,8 +243,9 @@ def train_cifar():
       st = time.monotonic()
       X, Y = X_in, Y_in
       if is_train:
-        X, Y, X_cm, Y_cm = augmentations(X, Y)
-        if getenv("CUTMIX", 1) and step >= hyp['net']['cutmix_steps']: X, Y = X_cm, Y_cm
+        vcm = Variable("do_cutmix", 0, 1)
+        X, Y = augmentations(X, Y, vcm.bind(int(getenv("CUTMIX", 1) and step >= hyp['net']['cutmix_steps'])))
+
       et = time.monotonic()
       print(f"shuffling {'training' if is_train else 'test'} dataset in {(et-st)*1e3:.2f} ms ({epoch=})")
 
