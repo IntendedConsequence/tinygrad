@@ -233,8 +233,8 @@ def train_cifar():
       X = (Tensor.rand(X.shape[0],1,1,1) < 0.5).where(X.flip(-1), X) # flip LR
     X, Y = X[perms], Y[perms]
     cX, cY = cutmix(X, Y, perms, mask_size=hyp['net']['cutmix_size'])
-    X, Y = X.stack(cX)[do_cutmix], Y.stack(cY)[do_cutmix]
-    return X, Y
+    do_cutmix = Tensor(do_cutmix)
+    return X.stack(cX)[do_cutmix], Y.stack(cY)[do_cutmix]
 
   # the operations that remain inside batch fetcher is the ones that involves random operations
   def fetch_batches(X_in:Tensor, Y_in:Tensor, BS:int, is_train:bool):
