@@ -225,7 +225,7 @@ def train_cifar():
 
   @TinyJit
   def augmentations(X:Tensor, Y:Tensor):
-    perms = Tensor.randperm(X.shape[0], device=X.device) # We reuse perms for cutmix, because they are expensivne to generate
+    perms = Tensor.randperm(X.shape[0], device=X.device) # We reuse perms for cutmix, because they are expensive to generate
     if getenv("RANDOM_CROP", 1):
       X = random_crop(X, crop_size=32)
     if getenv("RANDOM_FLIP", 1):
