@@ -203,7 +203,7 @@ def train_cifar():
     return (idx_x >= low_x) * (idx_x < (low_x + mask_size)) * (idx_y >= low_y) * (idx_y < (low_y + mask_size))
 
   # Similar, but different enough.
-  def make_random_crop_indices(shape, mask_size) -> Tensor:
+  def make_random_crop_indices(shape, mask_size) -> tuple[Tensor, Tensor, Tensor, Tensor]:
     BS, _, H, W = shape
     low_x = Tensor.randint(BS, low=0, high=W-mask_size).reshape(BS,1,1,1)
     low_y = Tensor.randint(BS, low=0, high=H-mask_size).reshape(BS,1,1,1)
