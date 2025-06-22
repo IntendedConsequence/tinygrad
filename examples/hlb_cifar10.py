@@ -238,15 +238,6 @@ def train_cifar():
       cutmix_order = arange.stack(perms)[do_cutmix]
     elif True:
       cutmix_order = perms * do_cutmix + arange * (1 - do_cutmix)
-      # cutmix_order = perms * do_cutmix + arange - arange * do_cutmix # garbage
-      # cutmix_order = do_cutmix * (perms - arange) + arange # garbage
-    elif False:
-      # garbage
-      mask = Tensor.full(X.shape[0], fill_value=do_cutmix, device=X.device) > 0
-      cutmix_order = mask.where(perms, arange)
-    elif False:
-      # garbage
-      cutmix_order = (Tensor(do_cutmix) > 0).where(perms[None], arange[None])[0]
     X, Y = cutmix(X, Y, cutmix_order, mask_size=hyp['net']['cutmix_size'])
     return X, Y
 
