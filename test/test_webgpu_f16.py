@@ -9,5 +9,4 @@ class TestWebGPUf16(unittest.TestCase):
   def test_use_dxc_toggle_enables_f16(self):
     ref = np.arange(10).astype(np.float16).sum()
     result = Tensor.arange(10).half().sum().numpy()
-    # self.assertEqual(ref, result)
     np.testing.assert_equal(ref, result)
