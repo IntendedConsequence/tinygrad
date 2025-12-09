@@ -168,6 +168,28 @@ def prep_audio(waveforms: List[np.ndarray], batch_size: int, truncate=False, sr=
     log_spec = np.log10(np.clip(mel_spec, 1e-10, None))
     log_spec = np.maximum(log_spec, log_spec.max((1,2), keepdims=True) - 8.0)
     log_spec = (log_spec + 4.0) / 4.0
+  else:
+    waveforms = [(resample_batched(Tensor(wv), sr, RATE) if sr != RATE else Tensor(wv)).flatten()[:wv.shape[-1]] for wv in waveforms]
+    max_len = max(len(wav) for wav in waveforms)
+    waveforms = Tensor.cat(*[wv.pad((0, max_len-wv.shape[-1]))[None] for wv in waveforms])
+    max_len = SAMPLES_PER_SEGMENT if truncate else max_len
+
+    if (r := max_len % SAMPLES_PER_SEGMENT) > 0: max_len += SAMPLES_PER_SEGMENT - r
+
+    assert waveforms.shape[0] <= batch_size
+    waveforms = waveforms.pad(((0, batch_size-waveforms.shape[0]), (0, max_len-waveforms.shape[-1])))
+    # we could have a symbolic batch_size dim instead of manually padding here if conv/layernorm supported symbolic shapes
+    stft = stft_full(waveforms, N_FFT, stride=HOP_LENGTH, pad=(200, 200))
+    magnitudes = (stft[..., :-1] ** 2)
+    mel_spec = mel(sr=RATE, n_fft=N_FFT, n_mels=N_MELS) @ magnitudes
+
+    def log10(x:Tensor):
+      return x.log2() * (math.log(2) / math.log(10))
+
+    log_spec = log10(mel_spec.clip(1e-10, None))
+    log_spec = log_spec.maximum(log_spec.max((1,2), keepdim=True) - 8.0)
+    log_spec = (log_spec + 4.0) / 4.0
+    log_spec = log_spec.numpy()
 
   return log_spec
 
