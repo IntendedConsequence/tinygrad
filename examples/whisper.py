@@ -7,6 +7,8 @@ from tinygrad import Tensor, TinyJit, Variable, nn, dtypes
 from tinygrad.nn.state import torch_load, load_state_dict
 from tinygrad.helpers import getenv, fetch
 
+import math
+from examples.webgpu.whisper.audio_helpers import resample_batched, stft_full, mel
 import numpy as np
 import librosa
 
@@ -132,12 +134,13 @@ HOP_LENGTH = 160
 N_MELS = 80
 FRAMES_PER_SEGMENT = SAMPLES_PER_SEGMENT // HOP_LENGTH # 3000
 
-def prep_audio(waveforms: List[np.ndarray], batch_size: int, truncate=False) -> np.ndarray:
+def prep_audio(waveforms: List[np.ndarray], batch_size: int, truncate=False, sr=RATE) -> np.ndarray:
   """
   :param waveforms: A list of possibly variable length 16000Hz audio samples
   :param batch_size: The batch_size associated with the Whisper model being used to transcribe the audio.
                      Used to prevent JIT mismatch errors since the encoder does not accept symbolic shapes
   :param truncate: If true, truncates (or pads) audio to exactly 30s for a single encoder pass
+  :param sr: Sample rate of all waveforms. Waveforms will be resampled to 16000Hz if different.
   :return: mel spectrogram of the given waveforms
   """
   def pad_or_trim(arr, target_len):
@@ -149,21 +152,22 @@ def prep_audio(waveforms: List[np.ndarray], batch_size: int, truncate=False) -> 
     else:
       return arr[:target_len]
 
-  max_len = SAMPLES_PER_SEGMENT if truncate else max(len(wav) for wav in waveforms)
-  if (r := max_len % SAMPLES_PER_SEGMENT) > 0: max_len += SAMPLES_PER_SEGMENT - r
-  waveforms = np.array(list(map(lambda w: pad_or_trim(w, max_len), waveforms)))
-  assert waveforms.shape[0] <= batch_size
-  if waveforms.shape[0] < batch_size:
-    # we could have a symbolic batch_size dim instead of manually padding here if conv/layernorm supported symbolic shapes
-    waveforms = np.pad(waveforms, pad_width=((0, batch_size - waveforms.shape[0]), (0, 0)))
+  if not getenv("WHISPER_NEW_STFT"):
+    max_len = SAMPLES_PER_SEGMENT if truncate else max(len(wav) for wav in waveforms)
+    if (r := max_len % SAMPLES_PER_SEGMENT) > 0: max_len += SAMPLES_PER_SEGMENT - r
+    waveforms = np.array(list(map(lambda w: pad_or_trim(w, max_len), waveforms)))
+    assert waveforms.shape[0] <= batch_size
+    if waveforms.shape[0] < batch_size:
+      # we could have a symbolic batch_size dim instead of manually padding here if conv/layernorm supported symbolic shapes
+      waveforms = np.pad(waveforms, pad_width=((0, batch_size - waveforms.shape[0]), (0, 0)))
 
-  stft = librosa.stft(waveforms, n_fft=N_FFT, hop_length=HOP_LENGTH, window='hann', dtype=np.csingle)
-  magnitudes = np.absolute(stft[..., :-1]) ** 2
-  mel_spec = librosa.filters.mel(sr=RATE, n_fft=N_FFT, n_mels=N_MELS) @ magnitudes
+    stft = librosa.stft(waveforms, n_fft=N_FFT, hop_length=HOP_LENGTH, window='hann', dtype=np.csingle)
+    magnitudes = np.absolute(stft[..., :-1]) ** 2
+    mel_spec = librosa.filters.mel(sr=RATE, n_fft=N_FFT, n_mels=N_MELS) @ magnitudes
 
-  log_spec = np.log10(np.clip(mel_spec, 1e-10, None))
-  log_spec = np.maximum(log_spec, log_spec.max((1,2), keepdims=True) - 8.0)
-  log_spec = (log_spec + 4.0) / 4.0
+    log_spec = np.log10(np.clip(mel_spec, 1e-10, None))
+    log_spec = np.maximum(log_spec, log_spec.max((1,2), keepdims=True) - 8.0)
+    log_spec = (log_spec + 4.0) / 4.0
 
   return log_spec
 
