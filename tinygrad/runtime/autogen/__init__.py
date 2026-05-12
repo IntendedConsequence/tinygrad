@@ -25,6 +25,10 @@ webgpu_lib = "os.path.join(sysconfig.get_paths()['purelib'], 'pydawn', 'lib', 'l
 nv_lib_path = ("[f'/{pre}/cuda/targets/{tgt}/lib' for pre in ['opt', 'usr/local'] for tgt in "
                "[sysconfig.get_config_vars().get(\"MULTIARCH\", \"\").rsplit(\"-\", 1)[0], 'sbsa-linux']]")
 
+cuda_path_glob_template = "(glob.glob(os.path.join(os.environ.get('CUDA_PATH', ''), 'bin', '{}'))+[''])[0]"
+nvrtc_dll = "'nvrtc' if not WIN else " + cuda_path_glob_template.format("nvrtc64_*.dll")
+nvjitlink_dll = "'nvJitLink' if not WIN else " + cuda_path_glob_template.format("nvJitLink_*.dll")
+
 def load(name, files, **kwargs):
   if not (f:=(root/(path:=kwargs.pop("path", __name__)).replace('.','/')/f"{name}.py")).exists() or getenv('REGEN'):
     files, kwargs['args'] = files() if callable(files) else files, args() if callable(args:=kwargs.get('args', [])) else args
@@ -54,9 +58,9 @@ def __getattr__(nm):
       ["/usr/include/string.h", "/usr/include/elf.h", "/usr/include/unistd.h", "/usr/include/asm-generic/mman-common.h"]), dll="'c'", errno=True)
     case "avcodec": return load("avcodec", ["{}/libavcodec/hevc/hevc.h", "{}/libavcodec/cbs_h265.h"], srcs=ffmpeg_src)
     case "opencl": return load("opencl", ["{}/CL/cl.h"], dll="'OpenCL'", args=["-I{}"], srcs=opencl_src)
-    case "cuda": return load("cuda", ["{}/include/cuda.h"], dll="'cuda'", args=["-D__CUDA_API_VERSION_INTERNAL"], srcs=cudart_src, macros=False)
-    case "nvrtc": return load("nvrtc", ["{}/include/nvrtc.h"], dll="'nvrtc'", paths=nv_lib_path, srcs=nvrtc_src, prolog=["import sysconfig"])
-    case "nvjitlink": load("nvjitlink", [root/"extra/nvJitLink.h"], dll="'nvJitLink'", paths=nv_lib_path, prolog=["import sysconfig"])
+    case "cuda": return load("cuda", ["{}/include/cuda.h"], dll="'nvcuda' if WIN else 'cuda'", args=["-D__CUDA_API_VERSION_INTERNAL"], srcs=cudart_src, macros=False, prolog=["from tinygrad.helpers import WIN"])
+    case "nvrtc": return load("nvrtc", ["{}/include/nvrtc.h"], dll=nvrtc_dll, paths=nv_lib_path, srcs=nvrtc_src, prolog=["import sysconfig, os, glob", "from tinygrad.helpers import WIN"])
+    case "nvjitlink": load("nvjitlink", [root/"extra/nvJitLink.h"], dll=nvjitlink_dll, paths=nv_lib_path, prolog=["import sysconfig, os, glob", "from tinygrad.helpers import WIN"])
     case "kfd": return load("kfd", [root/"extra/hip_gpu_driver/kfd_ioctl.h"])
     case "nv_570" | "nv_580":
       return load(nm, [
