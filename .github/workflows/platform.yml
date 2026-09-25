@@ -182,7 +182,7 @@ jobs:
         shell: bash
         run: |
           python -c "from tinygrad import Device; from tinygrad.helpers import Target; assert Device.DEFAULT == Target.parse('${{ matrix.dev }}').device"
-          DEBUG=4 python test/test_tiny.py TestTiny.test_plus
+          DEBUG=5 FORWARD_ONLY=1 python test/test_tiny.py TestTiny.test_plus
       - name: Run test_tiny
         shell: bash
         run: python -m pytest -n=auto test/test_tiny.py --durations=20
