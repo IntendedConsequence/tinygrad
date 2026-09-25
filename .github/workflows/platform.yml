@@ -159,6 +159,7 @@ jobs:
           - 'CPU:LLVM'
           - 'CPU:X86'
           - 'WEBGPU'
+          - 'MOCK+CUDA:PTX'
 
     name: Windows (DEV=${{ matrix.dev }})
     runs-on: windows-2025
@@ -170,6 +171,8 @@ jobs:
         uses: ./.github/actions/setup-tinygrad
         with:
           key: windows-${{ matrix.dev }}-minimal
+          ocelot: ${{ contains(matrix.dev, 'MOCK+CUDA') }}
+          cuda: ${{ contains(matrix.dev, 'CUDA') }}
           deps: testing_minimal
           pydeps: ${{ matrix.dev == 'WEBGPU' && 'dawn-python' || '' }}
       - name: Set env
