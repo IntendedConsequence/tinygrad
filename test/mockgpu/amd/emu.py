@@ -321,10 +321,10 @@ def _int_clamp(op_name: str, srcs: dict) -> UOp | None:
 class _Ctx:
   """Context for instruction compilation - holds buffers and helpers."""
   __slots__ = ('inst_size', 'dyn_fields', '_axis_id', 'wave_size', 'vgpr', 'accvgpr')
-  sgpr = UOp.param(0, dtypes.uint32, SGPR_COUNT)
-  vmem = UOp.param(2, dtypes.uint32, 1 << 46)
-  lds = UOp.param(3, dtypes.uint32, 16384)
-  scratch = UOp.param(4, dtypes.uint8, 1 << 30)
+  sgpr = UOp.param(0, dtypes.uint32, SGPR_COUNT, name="sgpr")
+  vmem = UOp.param(2, dtypes.uint32, 1 << 46, name="vmem")
+  lds = UOp.param(3, dtypes.uint32, 16384, name="lds")
+  scratch = UOp.param(4, dtypes.uint8, 1 << 30, name="scratch")
   # Cache PARAM UOps by wave_size so all _Ctx instances with same wave_size share identical UOp references
   _vgpr_cache: dict[int, UOp] = {}
   _accvgpr_cache: dict[int, UOp] = {}
@@ -332,10 +332,10 @@ class _Ctx:
   def __init__(self, inst_size: int, wave_size: int = 32):
     self.inst_size, self._axis_id, self.wave_size = inst_size, 0, wave_size
     self.dyn_fields: list[tuple[int, int]] = []  # (lo, hi) of fields read dynamically
-    if wave_size not in _Ctx._vgpr_cache: _Ctx._vgpr_cache[wave_size] = UOp.param(1, dtypes.uint32, 256 * wave_size)
+    if wave_size not in _Ctx._vgpr_cache: _Ctx._vgpr_cache[wave_size] = UOp.param(1, dtypes.uint32, 256 * wave_size, name="vgpr")
     self.vgpr = _Ctx._vgpr_cache[wave_size]
     if wave_size == 64:
-      if wave_size not in _Ctx._accvgpr_cache: _Ctx._accvgpr_cache[wave_size] = UOp.param(5, dtypes.uint32, 256 * wave_size)
+      if wave_size not in _Ctx._accvgpr_cache: _Ctx._accvgpr_cache[wave_size] = UOp.param(5, dtypes.uint32, 256 * wave_size, name="accvgpr")
       self.accvgpr = _Ctx._accvgpr_cache[wave_size]
     else:
       self.accvgpr = self.vgpr
@@ -1252,10 +1252,7 @@ def _compile_mfma(inst: irc.VOP3P|irc.VOP3PX2, ctx: _Ctx) -> UOp:
     if is_fp8: return _FUNCS[f"{fp8_fmt}_to_f32"](raw >> UOp.const(sub_idx * 8, dtypes.uint32)).bitcast(dtypes.uint32)
     h = (raw >> UOp.const(sub_idx * 16, dtypes.uint32)) & UOp.const(0xFFFF, dtypes.uint32)
     if is_bf16: return h << UOp.const(16, dtypes.uint32)  # bf16 is the upper 16 bits of f32
-    # f16 -> f32 bit pattern, done in integer domain so the optimizer can't fold away the conversion
-    sign, exp, mant = (h >> _c(15)) & _c(1), (h >> _c(10)) & _c(0x1F), h & _c(0x3FF)
-    f32_bits = (sign << _c(31)) | ((exp + _c(112)) << _c(23)) | (mant << _c(13))
-    return exp.eq(_c(0)).where(_c(0), f32_bits)
+    return _FUNCS['f16_to_f32'](h).bitcast(dtypes.uint32)
 
   def mn_idx(lane: UOp) -> UOp:  # M/N matrix index held by a lane
     if M == 32:  # (lane%32)/16 selects the 16-wide block, (lane%32)%16 the index within it
@@ -1535,9 +1532,9 @@ def _compile_mem_op(inst: ir3.DS|ir3.FLAT|ir3.GLOBAL|ir3.SCRATCH|ir4.DS|ir4.VFLA
   """Unified memory operation compiler for DS, FLAT, GLOBAL, SCRATCH."""
   exec_mask, op_name = ctx.rexec(), _op_name(inst)
   pcode = get_pcode(inst.op)
-  # CDNA pcode uses CalcGlobalAddr/CalcDsAddr to compute address from raw components, but make_addr already handles this.
+  # CDNA and RDNA4 FLAT/SCRATCH pcode compute addresses from raw components, but make_addr already handles this.
   # Strip the addr computation line and use pre-computed ADDR directly (rename 'addr' -> 'ADDR' in remaining pcode).
-  if isinstance(inst, (irc.GLOBAL, irc.FLAT, irc.SCRATCH, irc.DS, ir4.VSCRATCH)) and 'Calc' in pcode and 'Addr' in pcode:
+  if isinstance(inst, (irc.GLOBAL, irc.FLAT, irc.SCRATCH, irc.DS, ir4.VFLAT, ir4.VSCRATCH)) and 'Calc' in pcode and 'Addr' in pcode:
     pcode = re.sub(r'addr\s*=\s*Calc\w+Addr\([^)]*\)\s*;?\n?', '', pcode).replace('MEM[addr', 'MEM[ADDR')
 
   is_lds = isinstance(inst, (ir3.DS, ir4.DS, irc.DS))
@@ -1557,7 +1554,9 @@ def _compile_mem_op(inst: ir3.DS|ir3.FLAT|ir3.GLOBAL|ir3.SCRATCH|ir4.DS|ir4.VFLA
     offset0, offset1 = ctx.inst_field(type(inst).offset0), ctx.inst_field(type(inst).offset1)  # type: ignore[union-attr]
     offset, saddr_reg = (offset1 << _c(8)) | offset0, None  # DS offset is 16-bit: (offset1 << 8) | offset0
   else:
-    offset0, offset1, saddr_reg = _c(0), _c(0), ctx.optional_field(inst, 'saddr')
+    # FLAT always uses a VGPR pair; its unused saddr bits can be zero rather than NULL.
+    offset0, offset1 = _c(0), _c(0)
+    saddr_reg = None if isinstance(inst, (ir3.FLAT, ir4.VFLAT, irc.FLAT)) else ctx.optional_field(inst, 'saddr')
     offset = ctx.inst_field_signed(getattr(type(inst), 'ioffset' if hasattr(type(inst), 'ioffset') else 'offset'))
 
   # Data width from canonical_op_bits (32/64/96/128), default to 32 for untyped ops
@@ -1606,7 +1605,7 @@ def _compile_mem_op(inst: ir3.DS|ir3.FLAT|ir3.GLOBAL|ir3.SCRATCH|ir4.DS|ir4.VFLA
       saddr_contrib = use_saddr.where(ctx.rsgpr_dyn(saddr_reg).cast(dtypes.uint64), UOp.const(0, dtypes.uint64)) \
         if saddr_reg is not None else UOp.const(0, dtypes.uint64)
       return base + addr_offset + saddr_contrib + offset64
-    # FLAT/GLOBAL: choose between SGPR base (saddr) or VGPR pair (addr) based on saddr validity
+    # GLOBAL can use an SGPR base plus a VGPR offset; FLAT always uses the full VGPR pair.
     saddr_base = _u64(ctx.rsgpr_dyn(saddr_reg), ctx.rsgpr_dyn(saddr_reg + _c(1))) if saddr_reg is not None else UOp.const(0, dtypes.uint64)
     vaddr_base = _u64(ctx.rvgpr_dyn(addr_reg, lane), ctx.rvgpr_dyn(addr_reg + _c(1), lane))
     # When saddr is valid: base = saddr pair, vaddr is 32-bit offset; otherwise: base = 0, vaddr is 64-bit address
@@ -1840,8 +1839,8 @@ def _get_runner(inst_bytes: bytes, arch: str = "rdna3"):
   canonical_name = f"{_op_name(inst).lower()}_{base.to_bytes(size, 'little').hex()}"
   sink = sink.replace(arg=KernelInfo(name=canonical_name)).rtag(1)
 
-  # NOTE: renderer output is not reproducible because of _MXCSRContext. PROFILE=0 prevents emulator instruction runners from polluting profiling.
-  with Context(NOOPT=1, CHECK_OOB=0, TUPLE_ORDER=0, EMULATED_DTYPES="", CAPTURE_PROCESS_REPLAY=0, PROFILE=0):
+  # NOTE: renderer output is not reproducible because of _MXCSRContext.
+  with Context(NOOPT=1, CHECK_OOB=0, TUPLE_ORDER=0, EMULATED_DTYPES="", CAPTURE_PROCESS_REPLAY=0):
     prg = to_program(sink, Device['CPU'].renderer)
     runtime = get_runtime('CPU', prg)
   _canonical_runner_cache.append((type(inst), base, mask, size, (prg, runtime)))

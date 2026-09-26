@@ -27,14 +27,23 @@ def z3_and(a:z3.ExprRef, b:z3.ExprRef) -> z3.ExprRef:
   raise RuntimeError(f"z3 int AND only supports 2**k-1 and -2**k masks, got {a=} {b=}")
 z3_alu: dict[Ops, Callable[..., z3.ExprRef]] = python_alu | {Ops.CMOD: lambda a,b: a-z3_cdiv(a,b)*b, Ops.CDIV: z3_cdiv, Ops.FLOORDIV: z3_floordiv,
   Ops.FLOORMOD: lambda a,b: a-z3_floordiv(a,b)*b,
-  Ops.SHR: lambda a,b: a/(2**b.as_long()), Ops.SHL: lambda a,b: a*(2**b.as_long()),
   Ops.AND: z3_and, Ops.WHERE: z3.If, Ops.XOR: z3_xor, Ops.MAX: lambda a,b: z3.If(a<b, b, a),}
+
+# Factor out the minimum count, then shift by its varying bits. Constant counts need no stages.
+def z3_shift(x:UOp, ctx:tuple[z3.Solver, dict[UOp, z3.ExprRef]]) -> z3.ExprRef:
+  a, b = (ctx[1][s] for s in x.src)
+  lo = max(0, int(x.src[1].vmin))
+  a = a / (1 << lo) if x.op is Ops.SHR else a * (1 << lo)
+  for i in range(max(0, int(x.src[1].vmax)-lo).bit_length()):
+    factor = 1 << (1 << i)
+    a = z3.If(((b-lo) / (1 << i)) % 2 == 1, a / factor if x.op is Ops.SHR else a * factor, a)
+  return z3.If(b < 0, z3.FreshInt("invalid_shift", ctx=ctx[0].ctx), a)
 
 def create_bounded(name:str, vmin:int|z3.ArithRef, vmax:int|z3.ArithRef, solver:z3.Solver) -> z3.ArithRef:
   solver.add((vmin <= (s:=z3.Int(name, ctx=solver.ctx)))&(s <= vmax))
   return s
 def create_var(x:UOp, ctx:tuple[z3.Solver, dict[UOp, z3.ExprRef]]) -> z3.ExprRef:
-  name = x.arg.name if x.op in {Ops.PARAM, Ops.BUFFER} else f"{x.op.name.lower()}{len(ctx[1])}"
+  name = x.arg.name if x.op in {Ops.PARAM, Ops.BUFFER, Ops.ALLOC} else f"{x.op.name.lower()}{len(ctx[1])}"
   return z3.Bool(name, ctx=ctx[0].ctx) if x.dtype == dtypes.bool else create_bounded(name, x.vmin, x.vmax, ctx[0])
 # z3 does not model widths: a cast only converts between bool and int
 def z3_cast(c:UOp, x:z3.ExprRef) -> z3.ExprRef:
@@ -48,7 +57,7 @@ z3_renderer = PatternMatcher([
   (UPat((Ops.SPECIAL, Ops.RANGE), name="x"), lambda x,ctx:
    create_bounded(x.arg if x.op is Ops.SPECIAL else f"r{range_str(x)}", 0, ctx[1][x.src[0]]-1, ctx[0])),
   # unknown values are variables bounded by their vmin/vmax: params, loads (non-pointer INDEX is a LOAD) and anything from floats
-  (UPat((Ops.PARAM, Ops.BUFFER, Ops.LOAD, Ops.INDEX), name="x"), create_var),
+  (UPat((Ops.PARAM, Ops.BUFFER, Ops.ALLOC, Ops.LOAD, Ops.INDEX), name="x"), create_var),
   (UPat((Ops.CAST, Ops.BITCAST)+tuple(GroupOp.Comparison), src=UPat(dtype=dtypes.floats), name="x"), create_var),
   # a bitcast between ints wraps into the target range, z3 ints are unbounded
   (UPat(Ops.BITCAST, dtypes.ints, src=(UPat.var("x", dtypes.ints),), name="c"),
@@ -57,13 +66,15 @@ z3_renderer = PatternMatcher([
   (UPat(Ops.CONST, arg=Invalid), lambda ctx: z3.Int("Invalid", ctx=ctx[0].ctx)),
   (UPat(Ops.CONST, name="x"), lambda x,ctx: z3.BoolVal(x.val, ctx=ctx[0].ctx) if x.dtype == dtypes.bool else z3.IntVal(x.val, ctx=ctx[0].ctx)),
   (UPat(Ops.CAST, src=(UPat.var("x"),), name="c"), lambda c,x,ctx: z3_cast(c, ctx[1][x])),
+  (UPat((Ops.SHL, Ops.SHR), name="x"), z3_shift),
   (UPat(GroupOp.ALU, name="x"), lambda x,ctx: z3_alu[x.op](*(ctx[1][s] for s in x.src))),
 ])
 
 def uops_to_z3(solver:z3.Solver, *uops: UOp) -> list[z3.ExprRef]:
   # gate on upstream memory addressing, but keep INDEX as an unknown LOAD
-  lst = list(UOp.sink(*uops).toposort(gate=lambda x: x.op not in {Ops.AFTER, Ops.SHRINK} and (x.op is not Ops.BUFFER or x.is_variable) and \
-                                      (x.dtype in dtypes.ints+(dtypes.bool, dtypes.weakint) or x.op is Ops.SINK)))[:-1]
+  lst = list(UOp.sink(*uops).toposort(gate=lambda x: x.op not in {Ops.AFTER, Ops.SHRINK, Ops.ALLOC}
+                                      and (x.op is not Ops.BUFFER or x.is_variable)
+                                      and (x.dtype in dtypes.ints+(dtypes.bool, dtypes.weakint) or x.op is Ops.SINK)))[:-1]
   z3map: dict[UOp, z3.ExprRef] = {}
   for u in lst:
     if (z3_rewritten:=z3_renderer.rewrite(u, ctx=(solver, z3map))) is None: raise NotImplementedError(f"{u.op} is not supported by z3")

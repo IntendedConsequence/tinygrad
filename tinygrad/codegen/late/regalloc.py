@@ -3,6 +3,7 @@ from tinygrad.helpers import dedup
 from tinygrad.uop.ops import UOp, Ops, PatternMatcher, UPat
 from tinygrad.renderer.isa import ISARenderer, Register, rdef, LinearContext
 from typing import Any
+from dataclasses import replace
 
 PSEUDO_OPS = {Ops.CONST, Ops.CAST, Ops.BITCAST, Ops.NOOP, Ops.AFTER, Ops.BARRIER, Ops.GROUP, Ops.STACK}
 
@@ -56,7 +57,7 @@ class LinearScanRegallocContext:
       # allocate uses
       for s in u.src:
         # HACK: cause of later hacks to lower range
-        if u.op is Ops.END: continue
+        if u.op in (Ops.END, Ops.BACKEDGE): continue
         if not isinstance(v:=rdef(s), Register): continue
         if v not in live: live[v] = fill(v, i)
         self.reals.setdefault(i, {})[v] = live[v]
@@ -89,7 +90,7 @@ class LinearScanRegallocContext:
         live_ins.append(live_in)
 
       # loop epilogue, reload registers that were live at loop entry
-      if u.op is Ops.END:
+      if u.op in (Ops.END, Ops.BACKEDGE):
         # TODO: if a uop is in a different reg in live out vs live in move between registers instead of loading
         # TODO: don't reload if first use in loop is a load
         for v,r in live_ins.pop().items():
@@ -101,16 +102,17 @@ def regalloc_rewrite(ctx:LinearScanRegallocContext, x:UOp):
   nsrc = []
   for j,s in enumerate(x.src):
     # v here is the virtual defined by the original s as s is the rewritten version
-    if i in ctx.reals and (v:=rdef(ctx.uops[i].src[j])) in ctx.spills: nsrc.append(ctx.ren.fill(ctx.spills[v], ctx.vdef(v), ctx.reals[i][v]))
+    if i in ctx.reals and (v:=rdef(ctx.uops[i].src[j])) in ctx.spills:
+      nsrc.append(ctx.ren.fill(ctx.spills[v], ctx.vdef(v), replace(ctx.reals[i][v], size=v.size)))
     else: nsrc.append(s)
-  ndefs = tuple(ctx.reals[i][v] for v in x.tag) if isinstance(x.tag, tuple) else x.tag
+  ndefs = tuple(replace(ctx.reals[i][v], size=v.size) for v in x.tag) if isinstance(x.tag, tuple) else x.tag
   nx = x.replace(src=tuple(nsrc), tag=ndefs)
 
-  before = [ctx.ren.fill(ctx.spills[v], ctx.vdef(v), r) for v,r in ctx.insert_before.get(i, [])]
+  before = [ctx.ren.fill(ctx.spills[v], ctx.vdef(v), replace(r, size=v.size)) for v,r in ctx.insert_before.get(i, [])]
   after = [ctx.ren.spill(ctx.spills[v], nx) for v in x.tag if v in ctx.spills] if isinstance(x.tag, tuple) else []
 
   return nx, before + [nx] + after
 
 pm_regalloc_rewrite = PatternMatcher([
-  (UPat({Ops.INS, Ops.RANGE, Ops.END, Ops.BUFFER, Ops.PARAM, Ops.SPECIAL} | PSEUDO_OPS, name="x"), regalloc_rewrite),
+  (UPat({Ops.INS, Ops.RANGE, Ops.END, Ops.BACKEDGE, Ops.BUFFER, Ops.PARAM, Ops.SPECIAL} | PSEUDO_OPS, name="x"), regalloc_rewrite),
 ])

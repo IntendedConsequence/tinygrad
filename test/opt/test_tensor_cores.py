@@ -3,7 +3,7 @@ import unittest
 
 from tinygrad import Device, Tensor, dtypes
 from tinygrad.tensor import _to_np_dtype
-from tinygrad.uop.ops import Ops, UOp, AxisType
+from tinygrad.uop.ops import Ops, UOp, AxisType, KernelInfo
 from tinygrad.dtype import DType
 from tinygrad.device import Buffer
 from tinygrad.helpers import Context, TC_SELECT, TC_OPT
@@ -16,7 +16,7 @@ from tinygrad.renderer.tc import amd_cdna_1616128
 from tinygrad.renderer.llvmir import LLVMRenderer, AMDLLVMRenderer
 
 # TODO: write a clean version of this
-from test.backend.test_linearizer import helper_realized_ast, helper_linearizer_opt
+from test.runtime.test_linearizer import helper_realized_ast, helper_linearizer_opt
 
 # NOTE: to_program always passes in Device[Device.DEFAULT].renderer explicitly for process_replay!!!
 
@@ -89,6 +89,37 @@ class TestTensorCores(unittest.TestCase):
       with self.subTest(tc=tc):
         helper_tc_allclose(tc.dims[0], tc.dims[1], tc.dims[2], tc.dtype_in, tc.dtype_out, axis=0, tc_opt=0)
 
+  @unittest.skipUnless(Device[Device.DEFAULT].renderer.tensor_cores, "test requires tensor cores")
+  def test_tensor_cores_nan(self):
+    for tc in [tc for tc in Device[Device.DEFAULT].renderer.tensor_cores if dtypes.is_float(tc.dtype_in)]:
+      with self.subTest(tc=tc):
+        _skip_unsupported_tc_dtypes(tc.dtype_in, tc.dtype_out)
+        a, b = Tensor.full((tc.dims[1], tc.dims[2]), float("nan"), dtype=tc.dtype_in), Tensor.ones(tc.dims[2], tc.dims[0], dtype=tc.dtype_in)
+        realized_ast, bufs = helper_realized_ast(a.matmul(b, dtype=tc.dtype_out))
+        run_program(replace_opts(realized_ast, [Opt(OptOps.TC, 0, (-1, 0, 1))]), bufs)
+        self.assertTrue(np.isnan(bufs[0].numpy()).all())
+
+  @unittest.skipUnless(Device.DEFAULT == "PYTHON" and Device[Device.DEFAULT].renderer.tensor_cores, "test requires emulated tensor cores")
+  def test_tensor_cores_emulated_half(self):
+    # the fragment layout is the instruction's, a dtype decomp only changes what carries the operands
+    for tc in [tc for tc in Device[Device.DEFAULT].renderer.tensor_cores if dtypes.half in (tc.dtype_in, tc.dtype_out)]:
+      with self.subTest(tc=tc), Context(EMULATED_DTYPES="half", SPEC=2):
+        helper_tc_allclose(tc.dims[0], tc.dims[1], tc.dims[2], tc.dtype_in, tc.dtype_out, axis=0, tc_opt=0)
+
+  @unittest.skipUnless(Device[Device.DEFAULT].renderer.tensor_cores, "test requires tensor cores")
+  def test_tensor_cores_partial_sum_in_accumulator(self):
+    # the heuristic tiles M, N and K after the TC opt: every partial sum enters the next WMMA's accumulator, never an add after it
+    for i, tc in enumerate(Device[Device.DEFAULT].renderer.tensor_cores):
+      with self.subTest(tc=tc):
+        _skip_unsupported_tc_dtypes(tc.dtype_in, tc.dtype_out)
+        with Context(ALLOW_TF32=1, TC_SELECT=i, TC_OPT=2):
+          a = _tc_rand(tc.dims[1]*8, tc.dims[2]*8, dtype=tc.dtype_in)
+          b = _tc_rand(tc.dims[2]*8, tc.dims[0]*8, dtype=tc.dtype_in)
+          ast = a.matmul(b, dtype=tc.dtype_out).schedule_linear().src[-1].src[0]
+          wmmas = [u for u in to_program(ast, Device[Device.DEFAULT].renderer).src[1].src if u.op is Ops.WMMA]
+        self.assertGreater(len(wmmas), 0)
+        for u in wmmas: self.assertTrue(any(x.op is Ops.LOAD for x in u.src[2].toposort()), f"accumulator is {u.src[2]}")
+
   @Context(ALLOW_TF32=1)
   @unittest.skipUnless(Device[Device.DEFAULT].renderer.tensor_cores, "test requires tensor cores")
   @unittest.skipIf(Device.DEFAULT == "AMD" and Device[Device.DEFAULT].renderer.target.arch.startswith("gfx9"),
@@ -129,18 +160,39 @@ class TestTensorCores(unittest.TestCase):
     axis = sche.axis_types.index(AxisType.REDUCE)
     if AxisType.UNROLL in sche.axis_types:
       # this tc keeps an unrolled reduce outside the WMMA, grouping inside it must be rejected
-      with self.assertRaises(KernelOptError): sche.apply_opt(Opt(OptOps.SPLIT, axis, (2, AxisType.GROUP_REDUCE)))
+      with self.assertRaises(KernelOptError): sche.apply_opt(Opt(OptOps.SPLIT, axis, (2, AxisType.LOCAL)))
     else:
       x, y = Tensor.rand(16, 64, dtype=tc.dtype_in), Tensor.rand(64, 16, dtype=tc.dtype_in)
       helper_linearizer_opt(x.matmul(y, dtype=tc.dtype_out),
-                            [[Opt(OptOps.SPLIT, axis, (amt, AxisType.GROUP_REDUCE, top))] for amt in (2, 4) for top in (False, True)],
+                            [[Opt(OptOps.SPLIT, axis, (amt, AxisType.LOCAL, top))] for amt in (2, 4) for top in (False, True)],
                             apply_tc=True, atol=3e-2, rtol=1e-3, check_default_opt=False)
+
+  @unittest.skipUnless(Device[Device.DEFAULT].renderer.tensor_cores, "test requires tensor cores")
+  def test_tensor_cores_failed_padto(self):
+    N, M, K = (tc:=Device[Device.DEFAULT].renderer.tensor_cores[0]).dims
+    sche = Scheduler(Tensor.empty(M//4, K, dtype=tc.dtype_in).matmul(Tensor.empty(K, N+N//2, dtype=tc.dtype_in), dtype=tc.dtype_out)
+                     .schedule_linear().src[-1].src[0], Device[Device.DEFAULT].renderer)
+    # N pads, then M is too small to pad. the failed attempt leaves the ast untouched
+    ast = sche.ast
+    with self.assertRaises(KernelOptError): sche.apply_opt(Opt(OptOps.TC, 0, (-1, 2, 1)))
+    self.assertIs(sche.ast, ast)
 
   @unittest.skipUnless(Device[Device.DEFAULT].renderer.tensor_cores, "test requires tensor cores")
   def test_tensor_cores_nested_reduce(self):
     tc = Device[Device.DEFAULT].renderer.tensor_cores[0]
     a, b = Tensor.empty(tc.dims[1]*2, tc.dims[2], dtype=tc.dtype_in), Tensor.empty(tc.dims[2], tc.dims[0], dtype=tc.dtype_in)
     ast = replace_opts(a.matmul(b, dtype=tc.dtype_out).sum(0).schedule_linear().src[-1].src[0], [Opt(OptOps.TC, 0, (-1, 0, 1))])
+    with self.assertRaises(KernelOptError): to_program(ast, Device[Device.DEFAULT].renderer)
+
+  @unittest.skipUnless(Device[Device.DEFAULT].renderer.tensor_cores, "test requires tensor cores")
+  def test_tensor_cores_contracted_m(self):
+    n, m, k = (tc:=Device[Device.DEFAULT].renderer.tensor_cores[0]).dims
+    def kernel(C:UOp, A:UOp, B:UOp) -> UOp:
+      i, j, r = UOp.range(m*2, 0, AxisType.WEAK), UOp.range(n*2, 1), UOp.range(k*2, 2, AxisType.REDUCE)
+      out = (A[i, r]*B[r, j]).cast(tc.dtype_out).reduce(i, r, arg=Ops.ADD)
+      return C[j].store(out).end(j).sink(arg=KernelInfo(opts_to_apply=(Opt(OptOps.TC, 0, (-1, 0, 1)),)))
+    a, b, c = Tensor.empty(m*2, k*2, dtype=tc.dtype_in), Tensor.empty(k*2, n*2, dtype=tc.dtype_in), Tensor.empty(n*2, dtype=tc.dtype_out)
+    ast = Tensor.custom_kernel(c, a, b, fxn=kernel)[0].schedule_linear().src[-1].src[0]
     with self.assertRaises(KernelOptError): to_program(ast, Device[Device.DEFAULT].renderer)
 
   @Context(ALLOW_TF32=1)
@@ -222,9 +274,7 @@ class TestTensorCores(unittest.TestCase):
     one = Tensor(1, dtype=tc.dtype_in)
     ma = (Tensor.rand(a.shape[0], 1) > 0.5).expand(a.shape).where(a, one)
     mb = (Tensor.rand(1, b.shape[1]) > 0.5).expand(b.shape).where(b, one)
-    # TODO: broken now, the padded K lanes multiply 1.0*1.0
-    with self.assertRaises(AssertionError):
-      helper_linearizer_opt(ma.matmul(mb, dtype=tc.dtype_out), [[tc_opt]], check_default_opt=False, atol=3e-2, rtol=1e-3)
+    helper_linearizer_opt(ma.matmul(mb, dtype=tc.dtype_out), [[tc_opt]], check_default_opt=False, atol=3e-2, rtol=1e-3)
 
   @Context(ALLOW_TF32=1)
   @unittest.skipIf(Device.DEFAULT == "PYTHON", "not generated on EMULATED device")
@@ -337,7 +387,7 @@ class TestTensorCores(unittest.TestCase):
   @unittest.skipIf(Device.DEFAULT == "AMD" and Device[Device.DEFAULT].renderer.target.arch.startswith(("gfx11", "gfx12")),
                    "TODO: LLVM AMDGPU miscompiles RDNA WMMA with masked operands, passes on PYTHON::gfx1100")
   def test_tc_padto_full_upcast(self):
-    # a fully upcast pad lane makes a WMMA operand entirely Invalid
+    # a fully upcast pad lane is gated to 0 on the WMMA operand
     tc = next(tc for tc in Device[Device.DEFAULT].renderer.tensor_cores if tc.dtype_in in (dtypes.half, dtypes.float))
     Tensor.manual_seed(3)
     a, b = Tensor.rand(17, 23, dtype=tc.dtype_in).realize(), Tensor.rand(23, 29, dtype=tc.dtype_in).realize()
