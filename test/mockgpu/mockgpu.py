@@ -1,4 +1,4 @@
-import ctypes, time, os, builtins, fcntl, typing
+import ctypes, time, os, builtins, typing
 from tinygrad.helpers import DEV
 from tinygrad.runtime.support.system import FileIOInterface
 from tinygrad.runtime.autogen import libc
@@ -66,6 +66,7 @@ class MockFileIOInterface(FileIOInterface):
     elif self.fd is not None: os.close(self.fd)
 
   def ioctl(self, request, arg):
+    import fcntl
     if self.fd in tracked_fds:
       return tracked_fds[self.fd].ioctl(self.fd, request, ctypes.addressof(arg))
     return fcntl.ioctl(self.fd, request, arg)
