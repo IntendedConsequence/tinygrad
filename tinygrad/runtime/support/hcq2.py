@@ -7,7 +7,7 @@ from tinygrad.helpers import dedup, pluralize, unwrap, to_tuple, ContextVar, Con
 from tinygrad.helpers import DEBUG, VIZ, HCQ2, DEV, ALL2ALL
 from tinygrad.device import Device, Buffer, BufferSpec, TinyELF, HCQ_RUNTIME_DEV
 from tinygrad.uop.ops import Ops, UOp, UPat, PatternMatcher, KernelInfo, GroupOp, graph_rewrite, rewrite_group, exec_alu
-from tinygrad.dtype import dtypes, DTYPES_DICT, AddrSpace
+from tinygrad.dtype import dtypes, AddrSpace
 from tinygrad.renderer import Estimates
 from tinygrad.schedule.prepare import pm_mops
 from tinygrad.engine.realize import get_call_arg_uops, get_call_name, get_call_outs_ins, get_call_written_bufs
