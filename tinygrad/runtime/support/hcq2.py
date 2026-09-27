@@ -88,12 +88,22 @@ def cfunc_buf(lib:str, name:str) -> Buffer:
   (b:=Buffer(HCQ_RUNTIME_DEV.value, 1, dtypes.uint64, preallocate=True)).host.view(fmt='Q')[0] = unwrap(ctypes.cast(fn, ctypes.c_void_p).value)
   return b
 
+CDTYPES_MAP = {
+  None: dtypes.void,
+  ctypes.c_bool: dtypes.bool,
+  ctypes.c_int8: dtypes.int8,   ctypes.c_uint8: dtypes.uint8,
+  ctypes.c_int16: dtypes.int16, ctypes.c_uint16: dtypes.uint16,
+  ctypes.c_int32: dtypes.int32, ctypes.c_uint32: dtypes.uint32,
+  ctypes.c_int64: dtypes.int64, ctypes.c_uint64: dtypes.uint64,
+  ctypes.c_float: dtypes.float32,
+  ctypes.c_double: dtypes.float64,
+  ctypes.c_void_p: dtypes.uint64
+}
+
 def ccall(fn:Any, *args:UOp|int) -> UOp:
   ptr = UOp.placeholder((1,), dtypes.uint64, 0, device=HCQ_RUNTIME_DEV.value, tag=("cfunc", fn.__module__.split(".")[-1], fn.__name__))
-  ret = dtypes.void if fn.restype is None else dtypes.uint64 if fn.restype is ctypes.c_void_p else \
-    next(d for d in DTYPES_DICT.values() if d.fmt == {'L': 'I' if ctypes.c_uint is ctypes.c_ulong else 'L', 'l': 'i' if ctypes.c_int is ctypes.c_long else 'l'}.get(fn.restype._type_, fn.restype._type_))
   cargs = [UOp.const(a, dtypes.int) if isinstance(a, int) else a for a in args]
-  return UOp.custom_function(fn.__name__, ptr.index(0).load()).call(*cargs, ret_dtype=ret)
+  return UOp.custom_function(fn.__name__, ptr.index(0).load()).call(*cargs, ret_dtype=CDTYPES_MAP[fn.restype])
 
 CDTYPE = {1: dtypes.uchar, 2: dtypes.ushort, 4: dtypes.uint, 8: dtypes.ulong} # a C field as the unsigned int of its size
 
