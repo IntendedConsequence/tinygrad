@@ -184,7 +184,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${{contains(matrix.dev, 'CUDA:CUDA')}}" == "true" ]]; then
-            echo "${{env.NVRTC_PATH_DIR}}" >> $GITHUB_PATH
+            echo "$(cygpath -w "$NVRTC_PATH_DIR")" >> $GITHUB_PATH
           fi
       - name: Check Path
         shell: bash
