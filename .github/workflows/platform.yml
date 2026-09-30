@@ -180,6 +180,12 @@ jobs:
       - name: Set env
         shell: bash
         run: printf "DEV=${{ matrix.dev }}${{ matrix.dev == 'CPU:CLANG' && '\nCPU_COUNT=2' || '' }}" >> $GITHUB_ENV
+      - name: Update Environment Variables
+        shell: bash
+        run: |
+          if [[ "${{contains(matrix.dev, 'CUDA:CUDA')}}" == "true" ]]; then
+            printf "${{env.NVRTC_PATH_DIR}}" >> $GITHUB_PATH
+          fi
       - name: Check Device.DEFAULT and print some source
         shell: bash
         run: |
