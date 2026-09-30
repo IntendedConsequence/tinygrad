@@ -186,6 +186,9 @@ jobs:
           if [[ "${{contains(matrix.dev, 'CUDA:CUDA')}}" == "true" ]]; then
             echo "${{env.NVRTC_PATH_DIR}}" >> $GITHUB_PATH
           fi
+      - name: Check Path
+        shell: bash
+        run: echo "$PATH"
       - name: Check Device.DEFAULT and print some source
         shell: bash
         run: |
