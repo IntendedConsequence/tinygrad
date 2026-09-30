@@ -189,6 +189,9 @@ jobs:
       - name: Check Path
         shell: bash
         run: python -c "import os; print(os.environ['PATH'])"
+      - name: Find nvrtc debug
+        shell: bash
+        run: find /c/Users/runneradmin/usr/local/cuda -name 'nvrtc*.dll' -print
       - name: Check Device.DEFAULT and print some source
         shell: bash
         run: |
