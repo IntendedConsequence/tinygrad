@@ -272,8 +272,12 @@ runs:
       run: |
         if [[ "$RUNNER_OS" == "Windows" ]]; then
           mkdir -p $HOME/usr/local/cuda/targets/x86_64-windows
-          curl -fL https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/windows-x86_64/cuda_nvrtc-windows-x86_64-11.5.119-archive.zip \
-            | /c/Windows/System32/tar.exe -xf - -C $HOME/usr/local/cuda/targets/x86_64-windows --strip-components=1
+          tmp=$(mktemp -d)
+          curl -fL 'https://developer.download.nvidia.com/compute/cuda/redist/cuda_nvrtc/windows-x86_64/cuda_nvrtc-windows-x86_64-11.5.119-archive.zip' -o "$tmp/cuda.zip"
+          7z x "$tmp/cuda.zip" "-o$tmp/extracted" >/dev/null
+          mkdir -p "$HOME/usr/local/cuda/targets/x86_64-windows"
+          cp -a "$tmp/extracted"/*/* "$HOME/usr/local/cuda/targets/x86_64-windows/"
+          rm -rf "$tmp"
           echo "NVRTC_PATH=$(cygpath -w "$HOME/usr/local/cuda/targets/x86_64-windows/lib/nvrtc64_112_0.dll")" >> "$GITHUB_ENV"
           echo "NVRTC_PATH_DIR=$(cygpath -w "$HOME/usr/local/cuda/targets/x86_64-windows/lib")" >> "$GITHUB_ENV"
         else
