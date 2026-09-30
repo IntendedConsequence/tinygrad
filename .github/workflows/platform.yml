@@ -159,6 +159,7 @@ jobs:
           - 'CPU:X86'
           - 'WEBGPU'
           - 'MOCK+CUDA:PTX'
+          - 'MOCK+CUDA:CUDA'
 
     name: Windows (DEV=${{ matrix.dev }})
     runs-on: windows-2025
