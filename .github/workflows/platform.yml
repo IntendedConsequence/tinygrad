@@ -179,7 +179,7 @@ jobs:
           pydeps: ${{ matrix.dev == 'WEBGPU' && 'dawn-python' || '' }}
       - name: Set env
         shell: bash
-        run: echo "DEV=${{ matrix.dev }}${{ matrix.dev == 'CPU:CLANG' && '\nCPU_COUNT=2' || '' }}" >> $GITHUB_ENV
+        run: printf "DEV=${{ matrix.dev }}${{ matrix.dev == 'CPU:CLANG' && '\nCPU_COUNT=2' || '' }}\n" >> $GITHUB_ENV
       - name: Update Environment Variables
         shell: bash
         run: |
