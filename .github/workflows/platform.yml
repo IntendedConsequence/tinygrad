@@ -188,7 +188,7 @@ jobs:
           fi
       - name: Check Path
         shell: bash
-        run: echo "$PATH"
+        run: python -c "import os; print(os.environ['PATH'])"
       - name: Check Device.DEFAULT and print some source
         shell: bash
         run: |
