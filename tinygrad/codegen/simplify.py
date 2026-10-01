@@ -2,14 +2,14 @@ import itertools
 from typing import Callable
 from tinygrad.uop.ops import UOp, PatternMatcher, UPat, Ops, graph_rewrite, _substitute, range_start, AxisType
 from tinygrad.uop.symbolic import symbolic
-from tinygrad.helpers import partition
+from tinygrad.helpers import partition, dedup
 from tinygrad.dtype import dtypes
 
 def flatten_range(r:UOp) -> UOp|None:
   off = range_start[r.op]
   rngs = r.src[off:]
   if not len(rngs): return None
-  return r.replace(src=r.src[:off]+tuple(UOp.sink(*rngs).ranges))
+  return r.replace(src=r.src[:off]+tuple(dedup(x for s in rngs for x in ((s,) if s.op is Ops.RANGE else s.ranges))))
 
 pm_flatten_range = PatternMatcher([
   # real ranges only
@@ -48,6 +48,13 @@ def mark_gated(ctx, idx):
   # but if a range is ever ungated, we cannot shrink it
   ctx |= {r:r.src[0] for r in x.ranges if r not in guards}
 
+def do_substitute(ctx:dict, x: UOp, sub_fxn:Callable[[UOp, UOp], UOp]) -> UOp|None:
+  # Only the kernel root: rewriting a nested SINK would leave its enclosing END's binders unchanged.
+  if x.arg is None: return None
+  ret = x.substitute({k:sub_fxn(k,v) for k,v in ctx.items() if v is not None})
+  ctx.clear()
+  return None if ret is x else ret.simplify()
+
 pm_simplify_ranges = PatternMatcher([
   (UPat((Ops.END, Ops.REDUCE), name="u"), simplify_merge_adjacent),
   (UPat(Ops.INDEX, name="idx"), mark_gated),
@@ -60,13 +67,6 @@ def mark_range_mod(ctx:dict[UOp, UOp|None], r:UOp, c:UOp) -> None:
   # ranges that aren't looped over can't be split
   if r not in ctx and r.axis_type not in {AxisType.WARP, AxisType.DEVICE} \
     and r.src[0].op is Ops.CONST and r.src[0].divides(c.val) is not None: ctx[r] = c
-
-def do_substitute(ctx:dict, x: UOp, sub_fxn:Callable[[UOp, UOp], UOp]) -> UOp|None:
-  # Only the kernel root: rewriting a nested SINK would leave its enclosing END's binders unchanged.
-  if x.arg is None: return None
-  ret = x.substitute({k:sub_fxn(k,v) for k,v in ctx.items() if v is not None})
-  ctx.clear()
-  return None if ret is x else ret.simplify()
 
 pm_split_ranges = PatternMatcher([
   (UPat(Ops.RANGE, name="r")%UPat.cvar("c"), mark_range_mod),

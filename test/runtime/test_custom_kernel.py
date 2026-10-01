@@ -4,9 +4,11 @@ import numpy as np
 from tinygrad.dtype import AddrSpace, dtypes, Invalid
 from tinygrad.helpers import getenv
 from tinygrad.schedule.rangeify import BufferizeOpts
-from tinygrad.uop.ops import KernelInfo, AxisType, Ops
+from tinygrad.uop.ops import KernelInfo, AxisType, Ops, uopfunc
 from tinygrad.codegen.opt import Opt, OptOps
 from tinygrad.renderer.ptx import PTXRenderer
+from tinygrad.renderer.cstyle import CStyleLanguage
+from tinygrad.renderer.llvmir import LLVMRenderer
 from test.helpers import assert_kernel_count
 from test.null.test_custom_kernel import custom_elementwise_add_kernel, custom_elementwise_addmul_kernel, custom_gemm
 
@@ -481,7 +483,8 @@ class TestCustomKernel(unittest.TestCase):
     self.assertEqual(a.flatten().tolist(), [2, 2, 3, 3])
     self.assertEqual(a.shape, (2, 2))
 
-  @unittest.expectedFailure
+  @unittest.skipUnless(isinstance(Device[Device.DEFAULT].renderer, (CStyleLanguage, LLVMRenderer)) and Device.DEFAULT == "CPU",
+                       "calls in kernels render on CPU")
   def test_call_in_kernel(self):
     def call_add(C:UOp, A:UOp) -> UOp:
       i = UOp.range(A.numel(), 0)
@@ -494,7 +497,10 @@ class TestCustomKernel(unittest.TestCase):
     def call_add_sum(C:UOp, A:UOp) -> UOp:
       tmp = UOp.alloc_like(A, addrspace=AddrSpace.REG)
       add_call = call_add(UOp.param(0, A.dtype, (N,), addrspace=AddrSpace.REG), A.param_like(1)).sink().call(tmp, A, name="add")
-      sum_call = call_sum(C.param_like(0), UOp.param(1, A.dtype, (N,), addrspace=AddrSpace.REG)).sink().call(C, tmp.after(add_call), name="sum")
+      tmp2 = UOp.alloc_like(A, addrspace=AddrSpace.REG)
+      add_call2 = call_add(UOp.param(0, A.dtype, (N,), addrspace=AddrSpace.REG),
+                           UOp.param(1, A.dtype, (N,), addrspace=AddrSpace.REG)).sink().call(tmp2, tmp.after(add_call), name="add2")
+      sum_call = call_sum(C.param_like(0), UOp.param(1, A.dtype, (N,), addrspace=AddrSpace.REG)).sink().call(C, tmp2.after(add_call2), name="sum")
       return sum_call.sink(arg=KernelInfo(name="call_in_kernel"))
 
     N = getenv("N", 4)
@@ -503,7 +509,110 @@ class TestCustomKernel(unittest.TestCase):
     out = Tensor.custom_kernel(Tensor.empty(1, dtype=a.dtype), out, fxn=lambda C,A: call_sum(C, A).sink(arg=KernelInfo(name="sum")))[0]
     self.assertEqual(out.tolist(), [N*(N+1)//2])
     out = Tensor.custom_kernel(Tensor.empty(1, dtype=a.dtype), a, fxn=call_add_sum)[0]
-    self.assertEqual(out.tolist(), [N*(N+1)//2])
+    self.assertEqual(out.tolist(), [N*(N+3)//2])
+
+  @unittest.skipUnless((isinstance(Device[Device.DEFAULT].renderer, CStyleLanguage) or Device.DEFAULT == "PYTHON") and
+                       Device.DEFAULT != "WEBGPU", "binary not supported on this backend")
+  def test_binary(self):
+    payload = bytes(range(256))
+    def kernel(out:UOp):
+      i = UOp.range(len(payload), 0)
+      data = UOp(Ops.BINARY, arg=payload)
+      return out[i].store(data[i]).end(i).sink(arg=KernelInfo(name="binary", opts_to_apply=()))
+    self.assertEqual(Tensor.empty(len(payload), dtype=dtypes.uint8).custom_kernel(fxn=kernel)[0].tolist(), list(payload))
+
+@unittest.skipUnless(Device.DEFAULT == "CPU" and isinstance(Device[Device.DEFAULT].renderer, (CStyleLanguage, LLVMRenderer)),
+                     "calls in kernels render on CPU")
+class TestCallInKernel(unittest.TestCase):
+  def test_nested_call(self):
+    @uopfunc
+    def incr(out:UOp, A:UOp):
+      i = UOp.range(A.shape[0], 0)
+      return out[i].store(A[i]+1).end(i).sink()
+
+    @uopfunc
+    def square(out:UOp, A:UOp):
+      tmp0, tmp1 = (UOp.alloc_like(A, addrspace=AddrSpace.REG) for _ in range(2))
+      call0 = incr(tmp0, A)
+      call1 = incr(tmp1, A.after(call0))
+      assert call0.body is call1.body
+      i = UOp.range(A.shape[0], 1)
+      return out[i].store(tmp1.after(call1)[i]**2).end(i).sink()
+
+    def kernel(C:UOp, A:UOp):
+      tmp = UOp.alloc_like(A, addrspace=AddrSpace.REG)
+      call = square(tmp, A)
+      i = UOp.range(A.shape[0], 2)
+      return C[i].store(tmp.after(call)[i]+10).end(i).sink(arg=KernelInfo(name="nested_calls"))
+
+    a = Tensor.arange(4).clone().realize()
+    out = Tensor.custom_kernel(Tensor.empty_like(a), a, fxn=kernel)[0]
+    self.assertEqual(out.tolist(), [11, 14, 19, 26])
+
+  def test_call_loop_mini(self, opts=()):
+    @uopfunc
+    def mul(p:UOp, q:UOp): return p[0].store(q[0]*3).sink()
+
+    def kernel(C:UOp, A:UOp):
+      i = UOp.range(4, 0)
+      call = mul(C[i], A[i])
+      return call.end(i).sink(arg=KernelInfo(name="call_loop_mini", opts_to_apply=opts))
+    a = Tensor([1, 2, 3, 4], dtype=dtypes.int).realize()
+    out = Tensor.custom_kernel(Tensor.zeros(4, dtype=dtypes.int).clone().realize(), a, fxn=kernel)[0]
+    self.assertEqual(out.tolist(), [3, 6, 9, 12])
+
+  def test_call_with_gated_store(self):
+    @uopfunc
+    def gated_store(out:UOp, idx:UOp):
+      i = idx[0]
+      return out[i.valid((i >= 0) & (i < out.shape[0]))].store(7).sink()
+
+    def kernel(C:UOp, A:UOp):
+      tmp = UOp.alloc_like(C, addrspace=AddrSpace.REG)
+      i = UOp.range(C.shape[0], 0)
+      init = tmp[i].store(0).end(i)
+      call = gated_store(tmp.after(init), A)
+      j = UOp.range(C.shape[0], 1)
+      return C[j].store(tmp.after(call)[j] + 1).end(j).sink(arg=KernelInfo(name="call_with_gated_store", opts_to_apply=()))
+
+    a = Tensor([2], dtype=dtypes.int).realize()
+    out = Tensor.custom_kernel(Tensor.zeros(4, dtype=dtypes.int).clone().realize(), a, fxn=kernel)[0]
+    self.assertEqual(out.tolist(), [1, 1, 8, 1])
+
+  @unittest.expectedFailure
+  def test_call_loop_mini_opts(self): self.test_call_loop_mini(opts=None)
+
+  @unittest.expectedFailure
+  def test_call_loop_split(self): self.test_call_loop_mini((Opt(OptOps.SPLIT, 0, (4, AxisType.UPCAST)),))
+
+  @unittest.expectedFailure
+  def test_call_loop_pad(self):
+    @uopfunc
+    def add(p:UOp, q:UOp): return p[0].store(p[0]+q[0]).sink()
+
+    def kernel(C:UOp, A:UOp):
+      i = UOp.range(3, 0)
+      call = add(C[i], A[i])
+      return call.end(i).sink(arg=KernelInfo(name="call_loop_padto", opts_to_apply=(Opt(OptOps.PADTO, 0, 4),)))
+
+    a = Tensor([1, 2, 3, 4], dtype=dtypes.int).realize()
+    out = Tensor.custom_kernel(Tensor.zeros(4, dtype=dtypes.int).clone().realize(), a, fxn=kernel)[0]
+    self.assertEqual(out.tolist(), [1, 2, 3, 0])
+
+  def test_uopfunc(self):
+    @uopfunc
+    def axpy(out:UOp, x:UOp, a:int) -> UOp: # a is a trace-time constant: two bodies, two C functions
+      i = UOp.range(x.shape[0], 0)
+      return out[i].store(out[i] + x[i] * a).end(i).sink()
+
+    def kernel(C:UOp, A:UOp) -> UOp:
+      C = C.after(axpy(C.after(axpy(C, A, 2)), A, 3))
+      i = UOp.range(A.shape[0], 1) # a loop after the calls
+      return C[i].store(C[i] + 1).end(i).sink(arg=KernelInfo(name="uopfunc", opts_to_apply=()))
+
+    a = Tensor([1, 2, 3, 4], dtype=dtypes.int).realize()
+    out = Tensor.custom_kernel(Tensor.zeros(4, dtype=dtypes.int).contiguous().realize(), a, fxn=kernel)[0]
+    self.assertEqual(out.tolist(), [6, 11, 16, 21])
 
 class TestCustomKernelInput(unittest.TestCase):
   def _test_mop(self, mop_fxn, max_kernels):
@@ -667,6 +776,23 @@ class TestUnshardStore(unittest.TestCase):
     a = Tensor(np.arange(32, dtype=np.float32).reshape(2, 4, 2, 2))
     out = _run_fragment_kernel(self, kernel, (2, 4, 2, 2), inputs=(a,))
     np.testing.assert_allclose(out, a.numpy(), atol=1e-4)
+
+  def _test_store_load_fragment(self, addrspace:AddrSpace):
+    # thread ty stores A[ty*8:ty*8+8] into its fragment, then reads it back into the same slice of C
+    def kernel(C:UOp, A:UOp) -> UOp:
+      ty = UOp.range(8, 0, AxisType.LOCAL)
+      frag = UOp.placeholder((8,), dtypes.float32, 0, addrspace).unshard((0,), (ty,))
+      return C.store(frag.after(frag.store(A))).end(ty).sink(arg=KernelInfo(name="store_load_fragment", opts_to_apply=()))
+    a = Tensor.arange(64, dtype=dtypes.float32)
+    out = _run_fragment_kernel(self, kernel, (64,), inputs=(a,))
+    np.testing.assert_equal(out, a.numpy())
+
+  @unittest.skipIf(not Device[Device.DEFAULT].renderer.has_local, "fragment tests need LOCAL ranges")
+  def test_store_load_reg_fragment(self): self._test_store_load_fragment(AddrSpace.REG)
+
+  @unittest.skipIf(not Device[Device.DEFAULT].renderer.has_local, "fragment tests need LOCAL ranges")
+  @unittest.expectedFailure  # TODO: should not fail silently
+  def test_store_load_local_fragment(self): self._test_store_load_fragment(AddrSpace.LOCAL)
 
 class TestUOpReduce(unittest.TestCase):
   def test_uop_sum(self):
