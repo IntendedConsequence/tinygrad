@@ -29,6 +29,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -54,6 +56,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -97,6 +101,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -127,6 +133,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -164,6 +172,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Setup Environment
         uses: ./.github/actions/setup-tinygrad
         with:
