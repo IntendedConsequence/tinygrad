@@ -94,8 +94,7 @@ CDTYPES_MAP = {
 }
 
 def ccall(fn:Any, *args:UOp|int) -> UOp:
-  ret = CDTYPES_MAP[fn.restype]
-  return UOp.custom_function(fn.__name__).call(*[UOp.const(a, dtypes.int) if isinstance(a, int) else a for a in args], ret_dtype=ret)
+  return UOp.custom_function(fn.__name__, dtype=CDTYPES_MAP[fn.restype]).call(*[UOp.const(a, dtypes.int) if isinstance(a, int) else a for a in args])
 
 CDTYPE = {1: dtypes.uchar, 2: dtypes.ushort, 4: dtypes.uint, 8: dtypes.ulong} # a C field as the unsigned int of its size
 
