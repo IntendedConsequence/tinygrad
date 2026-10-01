@@ -33,8 +33,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     # brew install uv
     - name: setup python environment
       run: |
@@ -102,8 +100,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup (AMD)
       if: ${{ matrix.dev == 'AMD' }}
       run: |
@@ -144,8 +140,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup (AMD)
       if: ${{ matrix.dev == 'AMD' }}
       run: |
@@ -194,8 +188,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup (AMD)
       if: ${{ matrix.dev == 'AMD' }}
       run: |
@@ -238,8 +230,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup (AMD)
       if: ${{ matrix.dev == 'AMD' }}
       run: |
@@ -285,8 +275,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup (AMD)
       if: ${{ matrix.dev == 'AMD' }}
       run: |
@@ -339,8 +327,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup (AMD)
       if: ${{ matrix.dev == 'AMD' }}
       run: |
@@ -434,8 +420,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: setup staging db
       if: github.ref == 'refs/heads/update_benchmark_staging'
       run: |
@@ -481,8 +465,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: setup staging db
       if: github.ref == 'refs/heads/update_benchmark_staging'
       run: |
@@ -517,8 +499,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: setup staging db
       if: github.ref == 'refs/heads/update_benchmark_staging'
       run: |
@@ -550,8 +530,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: setup staging db
       if: github.ref == 'refs/heads/update_benchmark_staging'
       run: |
@@ -587,8 +565,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup
       run: |
         ./extra/hcq/hcq_smi.py ${{ matrix.dev != 'NV' && 'AMD' || 'NV' }} rmmod --expect
@@ -661,8 +637,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Speed Test
       run: DEV=CPU:LLVM python3 test/speed/external_test_speed_v_torch.py
     - name: Speed Test (BEAM=2)

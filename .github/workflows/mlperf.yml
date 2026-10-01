@@ -17,8 +17,6 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Cleanup running AM processes
       run: python extra/amdpci/am_smi.py --pids --kill
     - name: Symlink datasets

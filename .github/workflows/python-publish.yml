@@ -13,8 +13,6 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v6
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
     - name: Set up Python
       uses: actions/setup-python@v6
       with:
