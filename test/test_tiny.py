@@ -27,7 +27,7 @@ class TestTiny(unittest.TestCase):
     out = Tensor([1,2,3], dtype=dtypes.int) + Tensor([4,5,6], dtype=dtypes.int)
     self.assertListEqual(out.tolist(), [5, 7, 9])
 
-  # @unittest.skipIf(dtypes.int64 not in Device[Device.DEFAULT].renderer.supported_dtypes(), "int64 is supported")
+  @unittest.skipIf(False not in Device[Device.DEFAULT].renderer.supported_dtypes(), "int64 is supported")
   def test_plus_long(self):
     # out = Tensor([2**31], dtype=dtypes.int64) + Tensor([2**31], dtype=dtypes.int64)
     # self.assertListEqual(out.tolist(), [2**32])
