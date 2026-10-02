@@ -26,10 +26,11 @@ jobs:
     name: In-tree Autogen
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    if: ${{ false }}
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -76,10 +77,11 @@ jobs:
     name: In-tree Autogen (macos)
     runs-on: macos-26
     timeout-minutes: 15
-    if: ${{ false }}
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:

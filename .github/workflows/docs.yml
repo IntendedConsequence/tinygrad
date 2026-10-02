@@ -9,9 +9,10 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
-    if: ${{ false }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Setup Environment
         uses: ./.github/actions/setup-tinygrad
         with:
