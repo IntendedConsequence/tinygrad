@@ -9,6 +9,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-24.04
+    if: ${{ false }}
     steps:
       - uses: actions/checkout@v6
       - name: Setup Environment
