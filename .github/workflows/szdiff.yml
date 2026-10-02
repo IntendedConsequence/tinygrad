@@ -1,6 +1,6 @@
 name: Check Line Counts
-on:
-  pull_request_target:
+# on:
+#   pull_request_target:
 
 # Cancel the workflow in progress in newer build is about to start.
 concurrency:
