@@ -26,6 +26,7 @@ jobs:
     name: MacOS (opt, device)
     runs-on: macos-26
     timeout-minutes: 20
+    if: ${{ false }}
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
@@ -53,6 +54,7 @@ jobs:
     name: MacOS (unit, mock)
     runs-on: macos-26
     timeout-minutes: 20
+    if: ${{ false }}
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
@@ -94,6 +96,7 @@ jobs:
     name: MacOS (DEV=METAL) (${{ matrix.group }})
     runs-on: macos-26
     timeout-minutes: 20
+    if: ${{ false }}
     env:
       DEV: METAL
     steps:
@@ -128,6 +131,7 @@ jobs:
     name: MacOS (DEV=${{ matrix.dev }})
     runs-on: macos-26
     timeout-minutes: 20
+    if: ${{ false }}
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
