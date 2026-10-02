@@ -1,6 +1,6 @@
 name: Check Line Counts
-# on:
-#   pull_request_target:
+on:
+  pull_request_target:
 
 # Cancel the workflow in progress in newer build is about to start.
 concurrency:
@@ -11,6 +11,7 @@ jobs:
   checkbranch:
     name: Check PR Branch status
     runs-on: ubuntu-24.04
+    if: ${{ false }}
     outputs:
       branchstat: ${{ steps.brstat.outputs.stat}}
     steps:
@@ -46,7 +47,7 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-24.04
     needs: checkbranch
-    if: needs.checkbranch.outputs.branchstat == 'false'
+    if: ${{ false }}
     steps:
       - name: Checkout code from PR branch
         uses: actions/checkout@v6
@@ -89,7 +90,7 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-24.04
     needs: checkbranch
-    if: needs.checkbranch.outputs.branchstat == 'true'
+    if: ${{ false }}
     steps:
       - name: Comment Rebase
         continue-on-error: false
