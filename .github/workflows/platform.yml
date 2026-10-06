@@ -156,8 +156,7 @@ jobs:
           - 'CPU:LLVM'
           - 'CPU:X86'
           - 'WEBGPU'
-          - 'MOCK+CUDA:PTX'
-          - 'MOCK+CUDA:CUDA'
+          - 'NULL'
 
     name: Windows (DEV=${{ matrix.dev }})
     runs-on: windows-2025
@@ -169,19 +168,11 @@ jobs:
         uses: ./.github/actions/setup-tinygrad
         with:
           key: windows-${{ matrix.dev }}-minimal
-          ocelot: ${{ contains(matrix.dev, 'MOCK+CUDA') }}
-          cuda: ${{ contains(matrix.dev, 'CUDA') }}
           deps: testing_minimal
           pydeps: ${{ matrix.dev == 'WEBGPU' && 'dawn-python' || '' }}
       - name: Set env
         shell: bash
         run: printf "DEV=${{ matrix.dev }}${{ matrix.dev == 'CPU:CLANG' && '\nCPU_COUNT=2' || '' }}\n" >> $GITHUB_ENV
-      - name: Update Environment Variables
-        shell: bash
-        run: |
-          if [[ "${{contains(matrix.dev, 'CUDA:CUDA')}}" == "true" ]]; then
-            echo "$NVRTC_PATH_DIR" >> $GITHUB_PATH
-          fi
       - name: Check Device.DEFAULT and print some source
         shell: bash
         run: |
