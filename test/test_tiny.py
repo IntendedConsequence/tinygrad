@@ -1,7 +1,11 @@
 # basic self-contained tests of the external functionality of tinygrad
 import unittest, random
 from tinygrad import Tensor, Context, Variable, TinyJit, dtypes, Device, nn, function
-from tinygrad.helpers import getenv, OSX
+from tinygrad.codegen import to_program
+from tinygrad.device import Compiler
+from tinygrad.helpers import Target, getenv, OSX, WIN
+
+from tinygrad.renderer.cstyle import CUDARenderer
 
 class TestTiny(unittest.TestCase):
 
@@ -30,6 +34,25 @@ class TestTiny(unittest.TestCase):
   def test_plus_big(self):
     out = Tensor.ones(16).contiguous() + Tensor.ones(16).contiguous()
     self.assertListEqual(out.tolist(), [2]*16)
+
+  @unittest.skipIf(not WIN, "long long for u64/i64 (LLP64) is a windows thing")
+  @unittest.expectedFailure
+  def test_windows_longlong(self):
+    class MockCompiler(Compiler):
+      def __init__(self, key): super().__init__(key)
+      def compile(self, src) -> bytes: return src.encode()
+
+    class CUDARendererMock(CUDARenderer):
+      def __init__(self, target:Target, use_nvcc=False):
+        super(CUDARenderer, self).__init__(target)
+        self.compiler = MockCompiler(target.arch)
+        self.tensor_cores = []
+
+    t = Tensor([2], dtype=dtypes.i64) + 1
+    s = t.schedule_linear().src[-1]
+    renderer = CUDARendererMock(Target("CUDA", arch="sm_75"))
+    p = to_program(s.src[0], renderer)
+    self.assertIn("long long", p.src[-2].arg)
 
   def test_cat(self):
     out = Tensor.cat(Tensor.ones(8).contiguous(), Tensor.zeros(8).contiguous())
