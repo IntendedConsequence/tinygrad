@@ -192,4 +192,4 @@ jobs:
         if: matrix.dev == 'NULL'
         shell: bash
         run: |
-          python test/device/cuda/test_renderer_failures.py
+          DEBUG=4 python test/device/cuda/test_renderer_failures.py
