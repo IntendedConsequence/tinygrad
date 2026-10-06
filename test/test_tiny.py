@@ -36,7 +36,6 @@ class TestTiny(unittest.TestCase):
     self.assertListEqual(out.tolist(), [2]*16)
 
   @unittest.skipUnless(WIN, "long long for u64/i64 (LLP64) is a windows thing")
-  @unittest.expectedFailure
   def test_windows_longlong(self):
     class MockCompiler(Compiler):
       def __init__(self, key): super().__init__(key)
