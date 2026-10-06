@@ -37,20 +37,15 @@ class TestTiny(unittest.TestCase):
 
   @unittest.skipUnless(WIN, "long long for u64/i64 (LLP64) is a windows thing")
   def test_windows_longlong(self):
-    class MockCompiler(Compiler):
-      def __init__(self, key): super().__init__(key)
-      def compile(self, src) -> bytes: return src.encode()
-
     class CUDARendererMock(CUDARenderer):
       def __init__(self, target:Target, use_nvcc=False):
         super(CUDARenderer, self).__init__(target)
-        self.compiler = MockCompiler(target.arch)
+        self.compiler = Compiler(cachekey=None)
         self.tensor_cores = []
 
     t = Tensor([2], dtype=dtypes.i64) + 1
     s = t.schedule_linear().src[-1]
-    renderer = CUDARendererMock(Target("CUDA", arch="sm_75"))
-    p = to_program(s.src[0], renderer)
+    p = to_program(s.src[0], CUDARendererMock(Target("CUDA", arch="sm_75")))
     self.assertIn("long long", p.src[-2].arg)
 
   def test_cat(self):
