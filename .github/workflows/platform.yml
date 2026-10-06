@@ -29,21 +29,21 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
         key: unittest-macos
         deps: testing_unit
-    - name: Run opt tests
-      run: DEV=METAL python -m pytest -n=auto test/opt --durations=20
     - name: Test tensor core ops (fake)
       run: DEV=METAL DEBUG=3 TC=2 python test/runtime/test_ops.py TestOps.test_gemm
     - name: Test tensor core ops (real)
       run: DEV=METAL DEBUG=3 python test/runtime/test_ops.py TestOps.test_big_gemm
     - name: Test Beam Search
       run: DEV=METAL IGNORE_BEAM_CACHE=1 python3 -m pytest extra/optimization/test_beam_search.py
-    - name: Test Device Specific
-      run: DEV=METAL python3 -m pytest -n=auto test/device/metal
+    - name: Run opt and device tests
+      run: DEV=METAL python3 -m pytest -n=auto test/runtime/test_kernel_opts.py test/runtime/test_tensor_cores.py test/runtime/test_search.py test/device/metal --durations=20
     #- name: Fuzz Test linearizer
     #  run: DEV=METAL DEPTH=4 FUZZ_N=50 FUZZ_MAX_SIZE=1000000 python test/external/fuzz_linearizer.py
     - name: Run process replay tests
@@ -56,6 +56,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -99,6 +101,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -129,6 +133,8 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v6
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
     - name: Setup Environment
       uses: ./.github/actions/setup-tinygrad
       with:
@@ -158,6 +164,8 @@ jobs:
           - 'CPU:LLVM'
           - 'CPU:X86'
           - 'WEBGPU'
+          - 'MOCK+CUDA:PTX'
+          - 'MOCK+CUDA:CUDA'
 
     name: Windows (DEV=${{ matrix.dev }})
     runs-on: windows-2025
@@ -165,15 +173,25 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Setup Environment
         uses: ./.github/actions/setup-tinygrad
         with:
           key: windows-${{ matrix.dev }}-minimal
+          ocelot: ${{ contains(matrix.dev, 'MOCK+CUDA') }}
+          cuda: ${{ contains(matrix.dev, 'CUDA') }}
           deps: testing_minimal
           pydeps: ${{ matrix.dev == 'WEBGPU' && 'dawn-python' || '' }}
       - name: Set env
         shell: bash
-        run: printf "DEV=${{ matrix.dev }}${{ matrix.dev == 'CPU:CLANG' && '\nCPU_COUNT=2' || '' }}" >> $GITHUB_ENV
+        run: printf "DEV=${{ matrix.dev }}${{ matrix.dev == 'CPU:CLANG' && '\nCPU_COUNT=2' || '' }}\n" >> $GITHUB_ENV
+      - name: Update Environment Variables
+        shell: bash
+        run: |
+          if [[ "${{contains(matrix.dev, 'CUDA:CUDA')}}" == "true" ]]; then
+            echo "$NVRTC_PATH_DIR" >> $GITHUB_PATH
+          fi
       - name: Check Device.DEFAULT and print some source
         shell: bash
         run: |
@@ -181,4 +199,9 @@ jobs:
           DEBUG=4 python test/test_tiny.py TestTiny.test_plus
       - name: Run test_tiny and device tests
         shell: bash
-        run: python -m pytest -n=auto test/test_tiny.py test/device/$(python -c 'from tinygrad import Device; print(Device.DEFAULT.lower())') --durations=20
+        run: |
+          if [[ "${{contains(matrix.dev, 'CUDA')}}" == "true" ]]; then
+            python -m pytest -n=auto test/test_tiny.py --durations=20
+          else
+            python -m pytest -n=auto test/test_tiny.py test/device/$(python -c 'from tinygrad import Device; print(Device.DEFAULT.lower())') --durations=20
+          fi
