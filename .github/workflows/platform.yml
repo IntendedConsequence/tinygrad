@@ -174,11 +174,13 @@ jobs:
         shell: bash
         run: printf "DEV=${{ matrix.dev }}${{ matrix.dev == 'CPU:CLANG' && '\nCPU_COUNT=2' || '' }}\n" >> $GITHUB_ENV
       - name: Check Device.DEFAULT and print some source
+        if: matrix.dev != 'NULL'
         shell: bash
         run: |
           python -c "from tinygrad import Device; from tinygrad.helpers import Target; assert Device.DEFAULT == Target.parse('${{ matrix.dev }}').device"
           DEBUG=4 python test/test_tiny.py TestTiny.test_plus
       - name: Run test_tiny and device tests
+        if: matrix.dev != 'NULL'
         shell: bash
         run: |
           if [[ "${{contains(matrix.dev, 'CUDA')}}" == "true" ]]; then
@@ -186,3 +188,8 @@ jobs:
           else
             python -m pytest -n=auto test/test_tiny.py test/device/$(python -c 'from tinygrad import Device; print(Device.DEFAULT.lower())') --durations=20
           fi
+      - name: Run CUDARenderer failure tests
+        if: matrix.dev == 'NULL'
+        shell: bash
+        run: |
+          python test/device/cuda/test_renderer_failures.py
