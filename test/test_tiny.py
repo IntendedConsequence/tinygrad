@@ -35,7 +35,7 @@ class TestTiny(unittest.TestCase):
     out = Tensor.ones(16).contiguous() + Tensor.ones(16).contiguous()
     self.assertListEqual(out.tolist(), [2]*16)
 
-  @unittest.skipIf(not WIN, "long long for u64/i64 (LLP64) is a windows thing")
+  @unittest.skipUnless(WIN, "long long for u64/i64 (LLP64) is a windows thing")
   @unittest.expectedFailure
   def test_windows_longlong(self):
     class MockCompiler(Compiler):
